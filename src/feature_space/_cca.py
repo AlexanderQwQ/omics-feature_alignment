@@ -155,8 +155,8 @@ class CCAAligner(BaseFeatureAligner):
         # 尝试 rCCA（pyrcca），失败则用 sklearn CCA
         canonical_corrs = None
         try:
-            import pyrcca
-            cca = pyrcca.CCA(
+            import rcca
+            cca = rcca.CCA(
                 reg=regularization[0],
                 numCC=n_components,
                 verbose=False,

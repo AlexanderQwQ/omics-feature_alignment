@@ -14,7 +14,7 @@ from . import plotting as pl
 from .pipeline import DynamicAlignmentPipeline
 
 # I/O
-from . import io
+from . import readers as io
 
 __all__ = [
     "__version__",

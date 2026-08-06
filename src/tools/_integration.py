@@ -42,15 +42,32 @@ def integrated_embedding(
         logg.warning("无可用的对齐矩阵，跳过集成嵌入")
         return mdata
 
-    # 拼接所有模态的矩阵
-    X_concat = np.vstack(matrices)
+    # 统一维度：对每个矩阵用 PCA 降到公共维度
+    min_dim = min(m.shape[1] for m in matrices)
+    common_dim = min(n_pca_comps, min_dim)
+    reduced = []
+    for X in matrices:
+        if X.shape[1] > common_dim:
+            pca_dim = PCA(n_components=common_dim, random_state=42)
+            reduced.append(pca_dim.fit_transform(X))
+        else:
+            reduced.append(X)
+    X_concat = np.vstack(reduced)
     logg.info(f"集成嵌入: 拼接矩阵 {X_concat.shape}")
 
     # PCA
     n_pca = min(n_pca_comps, X_concat.shape[1], X_concat.shape[0] - 1)
     pca = PCA(n_components=n_pca, random_state=42)
     X_pca = pca.fit_transform(X_concat)
-    mdata.obsm["X_pca_integrated"] = X_pca
+
+    # 不存储在 mdata.obsm（MuData n_obs 与拼接行数不匹配）
+    # 而是存储到 uns 中
+    if "alignment" not in mdata.uns:
+        mdata.uns["alignment"] = {}
+    mdata.uns["alignment"]["dimensionality_reduction"] = {
+        "pca": {"n_comps": n_pca, "explained_variance": float(np.sum(pca.explained_variance_ratio_))},
+    }
+    mdata.uns["alignment"]["X_pca_integrated"] = X_pca
 
     # UMAP
     try:
@@ -62,7 +79,7 @@ def integrated_embedding(
             random_state=42,
         )
         X_umap = reducer.fit_transform(X_pca)
-        mdata.obsm["X_umap_integrated"] = X_umap
+        mdata.uns["alignment"]["X_umap_integrated"] = X_umap
         logg.info(f"  PCA: {X_pca.shape}, UMAP: {X_umap.shape}")
     except ImportError:
         logg.warning("umap 不可用，仅计算 PCA")

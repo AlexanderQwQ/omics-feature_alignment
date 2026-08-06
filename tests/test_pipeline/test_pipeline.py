@@ -35,6 +35,10 @@ def test_pipeline_output_keys(mock_mdata):
         assert "X_feature_aligned" in mock_mdata.mod[mod_name].obsm, \
             f"{mod_name} 缺少 X_feature_aligned"
 
+    # 集成嵌入存储在 uns 中
+    assert "X_pca_integrated" in mock_mdata.uns["alignment"], \
+        "缺少 X_pca_integrated"
+
 
 def test_pipeline_evaluation(mock_mdata):
     """检查评估结果"""

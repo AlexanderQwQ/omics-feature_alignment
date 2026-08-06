@@ -10,8 +10,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import _logging as logg
-from ..temporal import DTWAligner, InterpolationAligner, PseudotimeAligner, LagModelingAligner, TemporalSelector
-from ..feature_space import MNNAligner, CCAAligner, OptimalTransportAligner, ManifoldAligner, FeatureSpaceSelector
+from temporal import DTWAligner, InterpolationAligner, PseudotimeAligner, LagModelingAligner, TemporalSelector
+from feature_space import MNNAligner, CCAAligner, OptimalTransportAligner, ManifoldAligner, FeatureSpaceSelector
 
 if TYPE_CHECKING:
     from mudata import MuData

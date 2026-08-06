@@ -12,7 +12,7 @@ def test_dtw_init():
 
 def test_dtw_run(mock_mdata):
     aligner = DTWAligner(pre_smoothing=False)
-    result = aligner.run(mock_mdata)
+    result = aligner.run(mock_mdata, time_key="time")
     assert result is mock_mdata  # 原地修改
     assert "alignment" in mock_mdata.uns
     assert "temporal" in mock_mdata.uns["alignment"]
@@ -21,25 +21,16 @@ def test_dtw_run(mock_mdata):
 
 def test_dtw_with_smoothing(mock_mdata):
     aligner = DTWAligner(pre_smoothing=True)
-    result = aligner.run(mock_mdata)
+    result = aligner.run(mock_mdata, time_key="time")
     assert "X_temporal_aligned" in mock_mdata.mod["scrna"].obsm
 
 
-def test_dtw_fallback_no_tslearn(mock_mdata, monkeypatch):
-    """测试 tslearn 不可用时的 fallback"""
-    import sys
-    monkeypatch.setitem(sys.modules, "tslearn", None)
-    monkeypatch.setattr("tslearn.metrics.dtw_path", None, raising=False)
-    # 应该通过 scipy fallback 运行
+def test_dtw_no_time_key(mock_mdata):
+    """DTW 对齐，使用 aligned_time 键（may not exist in all modalities）"""
     aligner = DTWAligner()
-    # 这会在 _pairwise_dtw 中触发 ImportError
-
-    try:
-        result = aligner.run(mock_mdata)
-        # 如果没有 crash，验证基本输出
-        assert "alignment" in mock_mdata.uns
-    except Exception:
-        pass  # fallback 可能也有问题，这是可接受的
+    result = aligner.run(mock_mdata, time_key="aligned_time")
+    # 可能没有模态有 aligned_time，应该正常返回
+    assert result is mock_mdata
 
 
 def test_dtw_different_backends(mock_mdata):

@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.only:
             # 分步模式
-            from io import Module1Reader
+            from readers import Module1Reader
 
             reader = Module1Reader(
                 data_dir=Path(input_path),

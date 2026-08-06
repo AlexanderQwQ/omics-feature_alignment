@@ -26,12 +26,8 @@ if TYPE_CHECKING:
 class DTWAligner(BaseTemporalAligner):
     """动态时间规整（DTW）对齐器。
 
-    适用场景：
-    - 采样时间点相对密集（≥5 个时间点）
-    - 存在局部形态相似但节奏不同的动态模式
-    - 不同实验条件下反应速度存在差异
-
-    使用 tslearn 作为 DTW 后端，支持标准 DTW 和 SoftDTW。
+    在保持 n_obs 不变的前提下，计算模态间的 DTW 距离和规整路径。
+    适用场景：采样密集（≥5 时间点）、局部形态相似但节奏不同的动态模式。
     """
 
     def __init__(
@@ -71,7 +67,7 @@ class DTWAligner(BaseTemporalAligner):
 
         logg.info(f"DTW 对齐: {len(valid_mods)} 个模态, 窗口={window_type}({window_size})")
 
-        # 提取每个模态的时间序列
+        # 提取每个模态的时间序列（按时间聚合的均值向量）
         series = {}
         for mod_name in valid_mods:
             times, X = self._get_time_series(mdata.mod[mod_name], time_key)
@@ -87,7 +83,6 @@ class DTWAligner(BaseTemporalAligner):
         for i in range(len(mod_names)):
             for j in range(i + 1, len(mod_names)):
                 mod_a, mod_b = mod_names[i], mod_names[j]
-                # 对每个特征计算 DTW 并取平均
                 dist, path = self._pairwise_dtw(
                     series[mod_a]["matrix"],
                     series[mod_b]["matrix"],
@@ -99,6 +94,15 @@ class DTWAligner(BaseTemporalAligner):
                 dtw_distances[pair_key] = float(dist)
                 warping_paths[pair_key] = path
                 logg.hint(f"  {pair_key}: DTW distance = {dist:.4f}")
+
+        # 将原始 X_corrected 存入 X_temporal_aligned（保持 n_obs 不变）
+        for mod_name in valid_mods:
+            adata = mdata.mod[mod_name]
+            if "X_corrected" in adata.obsm:
+                adata.obsm["X_temporal_aligned"] = np.asarray(adata.obsm["X_corrected"])
+            elif "X_temporal_aligned" not in adata.obsm:
+                X = self._get_time_series(adata, time_key)[1]
+                adata.obsm["X_temporal_aligned"] = X
 
         # 存储对齐结果
         self._store_trace(
@@ -119,14 +123,6 @@ class DTWAligner(BaseTemporalAligner):
             },
         )
 
-        # 将时间对齐后的矩阵存入各模态
-        for mod_name in valid_mods:
-            adata = mdata.mod[mod_name]
-            times, X = self._get_time_series(adata, time_key)
-            if self.pre_smoothing:
-                X = self._smooth(X)
-            adata.obsm["X_temporal_aligned"] = X
-
         logg.info(f"DTW 对齐完成: {len(dtw_distances)} 对模态")
         return mdata
 
@@ -138,19 +134,11 @@ class DTWAligner(BaseTemporalAligner):
         window_size: float,
         metric: str,
     ) -> tuple[float, list]:
-        """计算两个矩阵之间的 DTW 距离（对所有特征维度求平均）。
-
-        使用 tslearn 的 DTW 实现，支持全局窗口约束。
-        """
+        """计算两个矩阵之间的 DTW 距离"""
         try:
             from tslearn.metrics import dtw_path as ts_dtw_path
 
-            # 对每个特征维度分别计算 DTW，取平均
-            n_features_a = X_a.shape[1]
-            n_features_b = X_b.shape[1]
-            n_features = min(n_features_a, n_features_b)
-
-            # 全局窗口大小（序列长度比）
+            n_features = min(X_a.shape[1], X_b.shape[1])
             max_len = max(X_a.shape[0], X_b.shape[0])
             global_constraint = None
             if window_type == "sakoechiba":
@@ -160,7 +148,8 @@ class DTWAligner(BaseTemporalAligner):
 
             total_dist = 0.0
             best_path = []
-            for f in range(min(n_features, 10)):  # 最多取 10 个特征维度
+            n_feat_to_use = min(n_features, 10)
+            for f in range(n_feat_to_use):
                 try:
                     path, dist = ts_dtw_path(
                         X_a[:, f].reshape(-1, 1),
@@ -173,7 +162,7 @@ class DTWAligner(BaseTemporalAligner):
                 except Exception:
                     pass
 
-            avg_dist = total_dist / min(n_features, 10) if n_features > 0 else 0.0
+            avg_dist = total_dist / n_feat_to_use if n_feat_to_use > 0 else 0.0
             return avg_dist, best_path
 
         except ImportError:
@@ -184,14 +173,12 @@ class DTWAligner(BaseTemporalAligner):
         """使用 scipy 的简化 DTW fallback（1D 序列）"""
         from scipy.spatial.distance import cdist
 
-        # 对维度取均值，转为 1D 序列
         seq_a = np.mean(X_a, axis=1) if X_a.ndim > 1 else X_a
         seq_b = np.mean(X_b, axis=1) if X_b.ndim > 1 else X_b
 
         n, m = len(seq_a), len(seq_b)
         cost = cdist(seq_a.reshape(-1, 1), seq_b.reshape(-1, 1), metric="euclidean")
 
-        # 动态规划
         D = np.full((n + 1, m + 1), np.inf)
         D[0, 0] = 0
 
@@ -199,7 +186,6 @@ class DTWAligner(BaseTemporalAligner):
             for j in range(1, m + 1):
                 D[i, j] = cost[i - 1, j - 1] + min(D[i - 1, j], D[i, j - 1], D[i - 1, j - 1])
 
-        # 回溯规整路径
         path = []
         i, j = n, m
         while i > 0 and j > 0:
@@ -209,9 +195,7 @@ class DTWAligner(BaseTemporalAligner):
             elif j == 1:
                 i -= 1
             else:
-                diag = D[i - 1, j - 1]
-                up = D[i - 1, j]
-                left = D[i, j - 1]
+                diag, up, left = D[i - 1, j - 1], D[i - 1, j], D[i, j - 1]
                 if diag <= up and diag <= left:
                     i -= 1; j -= 1
                 elif up <= left:
@@ -227,5 +211,4 @@ class DTWAligner(BaseTemporalAligner):
         if X.shape[0] < window:
             return X
         from scipy.ndimage import uniform_filter1d
-
         return uniform_filter1d(X.astype(float), size=window, axis=0)

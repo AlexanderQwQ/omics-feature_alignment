@@ -11,9 +11,9 @@ import numpy as np
 from mudata import MuData
 
 import _logging as logg
-from ..evaluation._time_consistency import evaluate_time_consistency
-from ..evaluation._distribution import evaluate_distribution_consistency
-from ..evaluation._cross_modality import evaluate_cross_modality_correlation
+from evaluation._time_consistency import evaluate_time_consistency
+from evaluation._distribution import evaluate_distribution_consistency
+from evaluation._cross_modality import evaluate_cross_modality_correlation
 
 
 def run_full_evaluation(mdata: MuData) -> dict:

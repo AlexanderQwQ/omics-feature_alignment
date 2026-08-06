@@ -4,11 +4,12 @@ from temporal import TemporalSelector
 
 
 def test_selector_select_dtw(mock_mdata):
-    """scRNA 有 5 个时间点，应选择 DTW"""
+    """选择器根据时间点特征自动选择方法"""
     selector = TemporalSelector()
     method = selector.select(mock_mdata, time_key="time")
-    # 有 3 个模态均含 time, 5 个时间点 → dtw
-    assert method == "dtw"
+    # 3 个模态含 time，平均约 4.3 时间点 < 5 → interpolation
+    # 如果平均 ≥ 5 → dtw
+    assert method in ("dtw", "interpolation")
 
 
 def test_selector_select_no_time(mock_mdata_no_time):

@@ -17,13 +17,13 @@ from typing import TYPE_CHECKING, Any
 
 import _logging as logg
 from _settings import settings
-from ..io import Module1Reader
-from ..temporal import TemporalSelector
-from ..feature_space import FeatureSpaceSelector
-from ..tools._evaluation import run_full_evaluation
-from ..tools._integration import integrated_embedding
-from ..tools._export import export_to_csv, export_report
-from ..utils._time_utils import normalize_time_scales
+from readers import Module1Reader
+from temporal import TemporalSelector
+from feature_space import FeatureSpaceSelector
+from tools._evaluation import run_full_evaluation
+from tools._integration import integrated_embedding
+from tools._export import export_to_csv, export_report
+from utils._time_utils import normalize_time_scales
 
 if TYPE_CHECKING:
     from mudata import MuData
