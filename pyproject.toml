@@ -1,0 +1,114 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "omics_feature_alignment"
+description = "多组学动态特征对齐与集成模块"
+readme = "README.md"
+license = "BSD-3-Clause"
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Framework :: Jupyter",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: BSD License",
+    "Natural Language :: Chinese (Simplified)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dynamic = ["version"]
+dependencies = [
+    "anndata>=0.10",
+    "scanpy>=1.9",
+    "muon>=0.1",
+    "mudata>=0.2",
+    "numpy>=1.21",
+    "pandas>=1.5",
+    "scipy>=1.9",
+    "scikit-learn>=1.1",
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+    "pyyaml>=6.0",
+    "tqdm",
+    "h5py>=3.8",
+    "joblib",
+    "numba>=0.57",
+    # Module 2 新增依赖
+    "tslearn>=0.6",
+    "POT>=0.9",
+    "pyrcca>=1.0",
+    "rich",
+]
+
+[project.optional-dependencies]
+torch = ["torch>=1.13"]
+mofa = ["mofapy2>=0.7"]
+gpy = ["GPy>=1.10"]
+stats = ["statsmodels>=0.14"]
+deep = ["torch>=1.13", "scvi-tools>=1.0"]
+test = [
+    "pytest>=7.0",
+    "pytest-cov",
+    "pytest-mock",
+]
+dev = [
+    "ruff",
+    "pre-commit",
+]
+
+[project.urls]
+Homepage = "https://github.com/AlexanderQwQ/omics-feature-alignment"
+Source = "https://github.com/AlexanderQwQ/omics-feature-alignment"
+
+[project.scripts]
+omics-align = "src.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.hatch.version]
+path = "src/_version.py"
+
+[tool.ruff]
+src = ["src"]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "B",      # bugbear
+    "C4",     # comprehensions
+    "E",      # pycodestyle errors
+    "F",      # pyflakes
+    "I",      # isort
+    "N",      # naming
+    "PL",     # pylint
+    "RUF",    # ruff-specific
+    "SIM",    # simplify
+    "UP",     # pyupgrade
+    "W",      # pycodestyle warnings
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "PLR0913", # too many arguments
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+addopts = ["-v", "--tb=short"]

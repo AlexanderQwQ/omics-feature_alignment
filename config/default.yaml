@@ -1,0 +1,163 @@
+# =============================================================================
+# omics_feature_alignment 默认配置文件
+# =============================================================================
+# 所有可调参数集中管理于此文件。
+# 命令行参数优先于本文件中的设置。
+
+# -----------------------------------------------------------------------------
+# 输入配置
+# -----------------------------------------------------------------------------
+input:
+  # Module 1 处理后数据目录（相对路径相对于本配置文件所在目录）
+  data_dir: "../omics_standardization/data/processed/"
+  # 要处理的模态列表（空列表 = 全部可用模态）
+  modalities: []
+  # 用于对齐的数据源: X_corrected | normalized | imputed
+  alignment_layer: X_corrected
+  # .obs 中的时间列名
+  time_key: time
+  # .obs 中的条件/分组列名
+  condition_key: condition
+  # .obs 中的批次列名
+  batch_key: batch
+  # .obs 中的时间单位列名
+  time_unit_key: time_unit
+
+# -----------------------------------------------------------------------------
+# 阶段一：多形态动态时间与过程对齐
+# -----------------------------------------------------------------------------
+temporal:
+  # 方法: auto | dtw | interpolation | pseudotime | lag
+  method: auto
+
+  # 时间尺度归一化
+  time_normalization:
+    enabled: true
+    # 目标时间单位
+    target_unit: hour
+    # 转换因子
+    conversion_factors:
+      day: 24
+
+  # ① DTW 动态时间规整
+  dtw:
+    # 后端: tslearn (SoftDTW) | dtaidistance (fast C)
+    backend: tslearn
+    # 窗口约束类型: sakoechiba | itakura | none
+    window_type: sakoechiba
+    # 窗口大小（序列长度比例, 0.0-1.0）
+    window_size: 0.1
+    # 距离度量
+    metric: euclidean
+    # 是否预平滑处理（降低噪声干扰）
+    pre_smoothing: false
+
+  # ② 时间插值与统一映射
+  interpolation:
+    # 插值方法: linear | spline | loess
+    method: spline
+    # 统一时间网格点数
+    n_grid: 100
+    # 是否保留原始观测点（否则全部替换为插值点）
+    preserve_original: true
+
+  # ③ 伪时间排序与阶段映射
+  pseudotime:
+    # 后端
+    backend: scanpy_dpt
+    # 近邻数
+    n_neighbors: 30
+    # 扩散成分数
+    n_dcs: 15
+    # 根细胞（null = 自动检测）
+    root_cells: null
+
+  # ④ 时间延迟建模与相关性对齐
+  lag_modeling:
+    # 最大滞后步数
+    max_lag: 5
+    # 相关方法: pearson | spearman | mutual_info
+    method: pearson
+    # 滑动窗口大小
+    window_size: 3
+
+# -----------------------------------------------------------------------------
+# 阶段二：特征空间补充校正
+# -----------------------------------------------------------------------------
+feature_space:
+  # 方法: auto | mnn | cca | optimal_transport | manifold
+  method: auto
+
+  # ① MNN 互为最近邻
+  mnn:
+    # 近邻数
+    n_neighbors: 15
+    # 高斯核带宽
+    sigma: 1.0
+    # 方差调整
+    var_adj: true
+    # 余弦归一化（输入）
+    cos_norm_in: true
+    # 余弦归一化（输出）
+    cos_norm_out: true
+
+  # ② CCA / rCCA 典型相关分析
+  cca:
+    # 典型成分数
+    n_components: 20
+    # 是否标准化
+    scale: true
+    # rCCA 正则化系数（每模态一个）
+    regularization: [0.1, 0.1]
+
+  # ③ 最优传输
+  optimal_transport:
+    # 后端
+    backend: pot
+    # 变体: gw | fused_gw | coot | unbalanced
+    variant: fused_gromov_wasserstein
+    # FGW 权衡参数（0=pure GW, 1=pure Wasserstein）
+    alpha: 0.5
+    # 熵正则化系数
+    epsilon: 0.01
+    # 最大迭代次数
+    max_iter: 1000
+    # 求解器: pgd | ppa | bapg
+    solver: pgd
+
+  # ④ 流形对齐
+  manifold:
+    # 方法: spectral | mnn | scanorama
+    method: spectral
+    # 成分数
+    n_components: 20
+
+# -----------------------------------------------------------------------------
+# 输出配置
+# -----------------------------------------------------------------------------
+output:
+  # 输出格式: h5mu | h5ad
+  format: h5mu
+  # 是否压缩
+  compress: true
+  # 是否保存中间步骤结果
+  save_intermediate: true
+  # 是否导出结构化特征矩阵为 CSV
+  export_matrix: true
+  # 是否生成对齐报告 HTML
+  export_report: true
+  # 是否为每种模态创建子目录
+  per_modality_subdir: true
+  # 汇总文件名（不含扩展名）
+  combined_filename: aligned
+
+# -----------------------------------------------------------------------------
+# 日志配置
+# -----------------------------------------------------------------------------
+logging:
+  # 日志级别: error | warning | info | hint | debug
+  level: info
+  # 是否写入日志文件
+  to_file: true
+  # 日志文件输出目录
+  log_dir: logs

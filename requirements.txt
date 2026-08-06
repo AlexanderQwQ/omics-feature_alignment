@@ -1,0 +1,26 @@
+# requirements.txt — Module 2 新增依赖
+#
+# 基础依赖（omics-std conda 环境已包含，不在本文件中列出）：
+#   anndata, mudata, muon, scanpy, numpy, scipy, pandas,
+#   scikit-learn, matplotlib, seaborn, pyyaml, tqdm, h5py, joblib, numba
+#
+# 以下为 Module 2 额外需要的包：
+
+# 时间序列对齐
+tslearn>=0.6
+
+# 特征空间校正
+POT>=0.9
+
+# 正则化 CCA
+pyrcca>=1.0
+
+# 终端美化输出
+rich
+
+# --- 可选依赖 ---
+# mofapy2>=0.7       # MOFA 多组学因子分析（需 R 环境）
+# GPy>=1.10          # 高级高斯过程核
+# statsmodels>=0.14  # 统计检验
+# torch>=1.13        # 深度学习后端
+# scvi-tools>=1.0    # scVI 潜在模型
