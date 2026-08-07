@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 import _logging as logg
 from _settings import settings
 from readers import Module1Reader
@@ -104,6 +106,10 @@ class DynamicAlignmentPipeline:
         mdata = normalize_time_scales(mdata)
         self._steps.append("time_normalization")
 
+        # ★ 对齐前快照 — 用于 before/after 对比
+        logg.info("--- 对齐前基线快照 ---")
+        mdata = self._snapshot_before(mdata)
+
         # Step 2: 阶段一 — 时间/过程对齐
         logg.info("--- 阶段一：动态时间与过程对齐 ---")
         mdata = self._step_temporal(mdata)
@@ -122,7 +128,7 @@ class DynamicAlignmentPipeline:
         self._steps.append("dimensionality_reduction")
         mdata.uns["alignment"]["steps_executed"].append("dimensionality_reduction")
 
-        # Step 5: 评估
+        # Step 5: 评估（使用 before/after 快照计算差值）
         logg.info("--- 三维度评估 ---")
         self._results["evaluation"] = run_full_evaluation(mdata)
         self._steps.append("evaluation")
@@ -184,6 +190,33 @@ class DynamicAlignmentPipeline:
 
         selector = FeatureSpaceSelector()
         return selector.run(mdata, method=method, batch_key="batch")
+
+    def _snapshot_before(self, mdata: MuData) -> MuData:
+        """在对齐前保存基线快照，供 before/after 对比评估使用。"""
+        from evaluation._cross_modality import evaluate_cross_modality_correlation
+        from evaluation._distribution import evaluate_distribution_consistency
+        from evaluation._time_consistency import evaluate_time_consistency
+
+        # 临时使用未对齐的数据做基线评估
+        for mod_name, adata in mdata.mod.items():
+            if "X_corrected" in adata.obsm:
+                adata.obsm["X_temporal_aligned"] = np.asarray(adata.obsm["X_corrected"])
+                adata.obsm["X_feature_aligned"] = np.asarray(adata.obsm["X_corrected"])
+
+        time_before = evaluate_time_consistency(mdata)
+        dist_before = evaluate_distribution_consistency(mdata)
+        cross_before = evaluate_cross_modality_correlation(mdata)
+
+        mdata.uns["alignment"]["before"] = {
+            "time_consistency": time_before,
+            "distribution_consistency": dist_before,
+            "cross_modality_correlation": cross_before,
+        }
+        logg.hint(
+            f"基线快照: time_seq={time_before.get('sequence_similarity_score', 0):.3f}, "
+            f"cross_corr={cross_before.get('mean_pearson_correlation', 0):.3f}"
+        )
+        return mdata
 
     def _save(self, mdata: MuData, output_dir: Path) -> None:
         """保存对齐结果"""

@@ -20,20 +20,16 @@ def evaluate_time_consistency(
     time_key: str = "aligned_time",
     layer_key: str = "X_temporal_aligned",
 ) -> dict:
-    """评估时间对齐后的一致性。
+    """评估时间对齐后的一致性（含 before/after 对比）。
 
     Args:
-        mdata: 已完成时间对齐的 MuData
-        time_key: 时间列名
-        layer_key: 对齐后矩阵的 obsm 键名
-
-    Returns:
-        时间一致性指标字典
+        mdata: 已完成时间对齐的 MuData（含 .uns["alignment"]["before"] 快照）
     """
     metrics: dict = {
         "dtw_distance_reduction": None,
         "sequence_similarity_score": 0.0,
         "time_ordering_consistency": 0.0,
+        "similarity_gain": 0.0,
         "modality_details": {},
     }
 
@@ -97,8 +93,14 @@ def evaluate_time_consistency(
 
     metrics["time_ordering_consistency"] = float(np.mean(ordering_scores)) if ordering_scores else 0.0
 
+    # before/after 对比
+    before_data = mdata.uns.get("alignment", {}).get("before", {}).get("time_consistency", {})
+    before_sim = before_data.get("sequence_similarity_score")
+    if before_sim is not None and metrics["sequence_similarity_score"] is not None:
+        metrics["similarity_gain"] = round(metrics["sequence_similarity_score"] - before_sim, 4)
+
     logg.info(
         f"时间一致性: 相似度={metrics['sequence_similarity_score']:.3f}, "
-        f"排序一致性={metrics['time_ordering_consistency']:.3f}"
+        f"增益={metrics.get('similarity_gain', 0):.3f}"
     )
     return metrics

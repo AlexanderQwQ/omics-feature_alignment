@@ -1,0 +1,33 @@
+{
+  "pipeline_version": "0.1.0",
+  "steps_executed": [
+    "temporal",
+    "feature_space",
+    "dimensionality_reduction"
+  ],
+  "n_modalities": 1,
+  "modalities": [
+    "scrna"
+  ],
+  "temporal": {
+    "method": "interpolation",
+    "dtw_distance_matrix": null
+  },
+  "feature_space": {
+    "method": "mnn",
+    "distribution_shift": null
+  },
+  "evaluation": {
+    "overall_score": 0.1666,
+    "time_consistency": {
+      "sequence_similarity": 0.0
+    },
+    "distribution_consistency": {
+      "mmd": 0.04486863315105438,
+      "silhouette": -0.0004499432980082929
+    },
+    "cross_modality_correlation": {
+      "cca": 0.0
+    }
+  }
+}

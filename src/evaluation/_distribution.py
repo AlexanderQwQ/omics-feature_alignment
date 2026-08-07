@@ -107,10 +107,15 @@ def evaluate_distribution_consistency(
     if silhouette_scores:
         metrics["silhouette_score"] = float(np.mean(silhouette_scores))
 
+    # before/after 对比
+    before = mdata.uns.get("alignment", {}).get("before", {}).get("distribution_consistency", {})
+    before_mmd = before.get("mmd_score")
+    if before_mmd is not None and metrics.get("mmd_score") is not None:
+        metrics["mmd_reduction"] = round(before_mmd - metrics["mmd_score"], 4)
+
     logg.info(
         f"分布一致性: MMD={metrics.get('mmd_score', 'N/A')}, "
-        f"Wasserstein={metrics.get('wasserstein_score', 'N/A')}, "
-        f"Silhouette={metrics.get('silhouette_score', 'N/A')}"
+        f"降幅={metrics.get('mmd_reduction', 'N/A')}"
     )
     return metrics
 

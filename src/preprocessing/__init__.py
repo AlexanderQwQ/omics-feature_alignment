@@ -11,7 +11,10 @@ from typing import TYPE_CHECKING
 
 import _logging as logg
 from temporal import DTWAligner, InterpolationAligner, PseudotimeAligner, LagModelingAligner, TemporalSelector
-from feature_space import MNNAligner, CCAAligner, OptimalTransportAligner, ManifoldAligner, FeatureSpaceSelector
+from feature_space import (
+    MNNAligner, CCAAligner, OptimalTransportAligner,
+    ManifoldAligner, FeatureSpaceSelector,
+)
 
 if TYPE_CHECKING:
     from mudata import MuData
@@ -156,6 +159,23 @@ def feature_cca(
         scale: 是否标准化
     """
     aligner = CCAAligner(n_components=n_components, scale=scale, **kwargs)
+    return aligner.run(mdata)
+
+
+def feature_manifold(
+    mdata: MuData,
+    method: str = "spectral",
+    n_components: int = 20,
+    **kwargs,
+) -> MuData:
+    """流形对齐。
+
+    Args:
+        mdata: 输入 MuData
+        method: 方法 (spectral | mnn | diffusion)
+        n_components: 成分数
+    """
+    aligner = ManifoldAligner(method=method, n_components=n_components, **kwargs)
     return aligner.run(mdata)
 
 

@@ -53,34 +53,55 @@ class PseudotimeAligner(BaseTemporalAligner):
         n_neighbors: int | None = None,
         n_dcs: int | None = None,
         root_cells: int | str | None = None,
+        n_stages: int = 5,
         **kwargs,
     ) -> MuData:
-        """执行伪时间排序。
+        """执行伪时间排序与阶段映射。
 
         Args:
             mdata: 输入 MuData
-            time_key: 伪时间不依赖实验时间，此参数可忽略
+            time_key: 忽略（伪时间不依赖实验时间）
             n_neighbors: 近邻数
             n_dcs: 扩散成分数
-            root_cells: 根细胞索引或标签（None=自动检测）
+            root_cells: 根细胞（None=自动检测）
+            n_stages: 阶段锚点数量（用于跨模态阶段映射）
         """
         n_neighbors = n_neighbors or self.n_neighbors
         n_dcs = n_dcs or self.n_dcs
         root_cells = root_cells if root_cells is not None else self.root_cells
 
-        logg.info(f"伪时间排序: {len(mdata.mod)} 个模态, neighbors={n_neighbors}, dcs={n_dcs}")
+        logg.info(f"伪时间排序: {len(mdata.mod)} 个模态, stages={n_stages}")
 
         pseudotime_log: dict[str, dict] = {}
+        stage_anchors: dict[str, dict] = {}
 
         for mod_name, adata in mdata.mod.items():
             try:
-                pt = self._compute_pseudotime(
-                    adata, n_neighbors, n_dcs, root_cells,
-                )
+                pt = self._compute_pseudotime(adata, n_neighbors, n_dcs, root_cells)
                 adata.obs["pseudotime"] = pt
 
-                # 将伪时间作为对齐时间轴
-                pt_sorted_indices = np.argsort(pt)
+                # 阶段映射：将伪时间等分为 n_stages 个阶段
+                stage_boundaries = np.linspace(pt.min(), pt.max(), n_stages + 1)
+                stage_labels = np.digitize(pt, stage_boundaries[1:-1])
+                adata.obs["process_stage"] = stage_labels.astype(int)
+
+                # 计算阶段锚点（每个阶段的质心）
+                anchors = {}
+                for s in range(n_stages):
+                    mask = stage_labels == s
+                    if mask.sum() > 0:
+                        if "X_corrected" in adata.obsm:
+                            centroid = np.mean(np.asarray(adata.obsm["X_corrected"])[mask], axis=0)
+                        else:
+                            centroid = np.mean(adata.X[mask].toarray() if hasattr(adata.X, "toarray") else adata.X[mask], axis=0)
+                        anchors[f"stage_{s}"] = {
+                            "n_cells": int(mask.sum()),
+                            "centroid_norm": float(np.linalg.norm(centroid)),
+                        }
+                stage_anchors[mod_name] = anchors
+
+                # 按伪时间排序
+                pt_sorted = np.argsort(pt)
                 if "X_corrected" in adata.obsm:
                     X = np.asarray(adata.obsm["X_corrected"])
                 elif "X_temporal_aligned" in adata.obsm:
@@ -88,15 +109,15 @@ class PseudotimeAligner(BaseTemporalAligner):
                 else:
                     X = self._get_time_series(adata, "time")[1]
 
-                adata.obsm["X_temporal_aligned"] = X[pt_sorted_indices]
-                adata.obs["aligned_time"] = np.argsort(pt).astype(float)  # 排序索引作为"时间"
+                adata.obsm["X_temporal_aligned"] = X[pt_sorted]
+                adata.obs["aligned_time"] = np.arange(len(pt_sorted)).astype(float)
 
                 pseudotime_log[mod_name] = {
                     "n_cells": adata.n_obs,
+                    "n_stages": n_stages,
                     "pseudotime_range": [float(np.min(pt)), float(np.max(pt))],
-                    "root_cells": str(root_cells),
                 }
-                logg.hint(f"  [{mod_name}]: 伪时间范围 [{pseudotime_log[mod_name]['pseudotime_range'][0]:.3f}, {pseudotime_log[mod_name]['pseudotime_range'][1]:.3f}]")
+                logg.hint(f"  [{mod_name}]: {n_stages} 阶段, 伪时间 [{pseudotime_log[mod_name]['pseudotime_range'][0]:.3f}, {pseudotime_log[mod_name]['pseudotime_range'][1]:.3f}]")
 
             except Exception as e:
                 logg.error(f"[{mod_name}] 伪时间计算失败: {e}")
@@ -112,8 +133,10 @@ class PseudotimeAligner(BaseTemporalAligner):
             },
             extra={
                 "pseudotime_log": pseudotime_log,
+                "stage_anchors": stage_anchors,
+                "n_stages": n_stages,
                 "stored_in_obsm": "X_temporal_aligned",
-                "stored_in_obs": "pseudotime, aligned_time",
+                "stored_in_obs": "pseudotime, aligned_time, process_stage",
             },
         )
 

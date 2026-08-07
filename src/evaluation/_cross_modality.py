@@ -101,18 +101,25 @@ def evaluate_cross_modality_correlation(
     if canonical_scores:
         metrics["mean_canonical_correlation"] = float(np.mean(canonical_scores))
 
-    # 相关性增益（与对齐前对比）
-    before_corr = 0.0
-    if "alignment" in mdata.uns and "cross_modality" in mdata.uns["alignment"]:
-        cm = mdata.uns["alignment"]["cross_modality"]
-        before_corr = cm.get("mean_correlation", 0.0)
-    metrics["correlation_gain"] = max(0, metrics["mean_pearson_correlation"] - before_corr)
+    # 相关性增益（与对齐前快照对比）
+    before = mdata.uns.get("alignment", {}).get("before", {}).get("cross_modality_correlation", {})
+    before_corr = before.get("mean_pearson_correlation")
+    if before_corr is not None and metrics["mean_pearson_correlation"] is not None:
+        metrics["correlation_gain"] = round(metrics["mean_pearson_correlation"] - before_corr, 4)
+    else:
+        metrics["correlation_gain"] = None
 
-    logg.info(
-        f"跨模态关联: Pearson={metrics['mean_pearson_correlation']:.3f}, "
-        f"CCA={metrics['mean_canonical_correlation']:.3f}, "
-        f"增益={metrics['correlation_gain']:.3f}"
-    )
+    gain = metrics.get("correlation_gain")
+    if gain is not None:
+        logg.info(
+            f"跨模态关联: Pearson={metrics['mean_pearson_correlation']:.3f}, "
+            f"增益={gain:.3f}"
+        )
+    else:
+        logg.info(
+            f"跨模态关联: Pearson={metrics['mean_pearson_correlation']:.3f}, "
+            f"CCA={metrics['mean_canonical_correlation']:.3f}"
+        )
     return metrics
 
 

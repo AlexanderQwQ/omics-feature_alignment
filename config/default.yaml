@@ -112,8 +112,6 @@ feature_space:
 
   # ③ 最优传输
   optimal_transport:
-    # 后端
-    backend: pot
     # 变体: gw | fused_gw | coot | unbalanced
     variant: fused_gromov_wasserstein
     # FGW 权衡参数（0=pure GW, 1=pure Wasserstein）
@@ -122,8 +120,8 @@ feature_space:
     epsilon: 0.01
     # 最大迭代次数
     max_iter: 1000
-    # 求解器: pgd | ppa | bapg
-    solver: pgd
+    # Unbalanced OT 质量正则化
+    reg_m: 1.0
 
   # ④ 流形对齐
   manifold:

@@ -149,6 +149,9 @@ def export_report(
 def _render_html_report(report: dict) -> str:
     """渲染简洁的 HTML 报告"""
     ev = report.get("evaluation", {})
+    overall = ev.get("overall_score", 0)
+    score_color = "#27ae60" if (isinstance(overall, (int, float)) and overall > 0.5) else "#e74c3c"
+    score_display = f"{overall:.4f}" if isinstance(overall, (int, float)) else str(overall)
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -157,7 +160,7 @@ def _render_html_report(report: dict) -> str:
     <style>
         body {{ font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; }}
         h1 {{ color: #333; }} h2 {{ color: #666; border-bottom: 2px solid #eee; padding-bottom: 8px; }}
-        .score {{ font-size: 48px; font-weight: bold; color: {'#27ae60' if ev.get('overall_score', 0) > 0.5 else '#e74c3c'}; }}
+        .score {{ font-size: 48px; font-weight: bold; color: {score_color}; }}
         table {{ width: 100%; border-collapse: collapse; margin: 16px 0; }}
         th, td {{ border: 1px solid #ddd; padding: 8px 12px; text-align: left; }}
         th {{ background: #f5f5f5; }}
@@ -169,7 +172,7 @@ def _render_html_report(report: dict) -> str:
     <p>Temporal: {report.get('temporal', {}).get('method', 'N/A')} | Feature Space: {report.get('feature_space', {}).get('method', 'N/A')}</p>
 
     <h2>Overall Score</h2>
-    <div class="score">{ev.get('overall_score', 'N/A')}</div>
+    <div class="score">{score_display}</div>
 
     <h2>Evaluation Details</h2>
     <table>

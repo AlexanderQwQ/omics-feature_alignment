@@ -121,11 +121,29 @@ class LagModelingAligner(BaseTemporalAligner):
             },
         )
 
-        # 对各模态应用滞后校正
+        # 应用滞后校正
         for mod_name in valid_mods:
             adata = mdata.mod[mod_name]
-            if "X_temporal_aligned" not in adata.obsm:
-                _, X = self._get_time_series(adata, time_key)
+            _, X = self._get_time_series(adata, time_key)
+
+            # 查找该模态涉及的最佳滞后
+            best_lag = 0
+            for pair_key, res in lag_results.items():
+                if mod_name in pair_key:
+                    lag = res.get("optimal_lag", 0)
+                    if abs(lag) > abs(best_lag):
+                        best_lag = lag
+
+            if best_lag != 0:
+                # 按滞后偏移矩阵行
+                X_shifted = np.zeros_like(X)
+                if best_lag > 0:
+                    X_shifted[best_lag:] = X[:-best_lag]
+                else:
+                    X_shifted[:best_lag] = X[-best_lag:]
+                adata.obsm["X_temporal_aligned"] = X_shifted
+                logg.hint(f"  [{mod_name}]: 应用滞后偏移 {best_lag} 步")
+            else:
                 adata.obsm["X_temporal_aligned"] = X
 
         logg.info(f"延迟建模完成: {len(lag_results)} 对模态")

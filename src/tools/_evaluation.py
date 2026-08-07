@@ -54,7 +54,8 @@ def run_full_evaluation(mdata: MuData) -> dict:
     if cca is not None:
         scores.append(float(cca))
 
-    overall_score = float(np.mean(scores)) if scores else 0.0
+    scores_clean = [s for s in scores if s is not None and not (isinstance(s, float) and np.isnan(s))]
+    overall_score = float(np.mean(scores_clean)) if scores_clean else 0.0
     overall_score = round(overall_score, 4)
 
     # 组装最终报告
