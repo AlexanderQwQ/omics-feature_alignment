@@ -150,6 +150,40 @@ output:
   combined_filename: aligned
 
 # -----------------------------------------------------------------------------
+# 混合存储配置 (暂未启用 — pipeline use_storage=False)
+# -----------------------------------------------------------------------------
+storage:
+  # MinIO / S3 对象存储
+  minio:
+    endpoint: localhost:9000
+    access_key: minioadmin
+    secret_key: minioadmin
+    bucket: omics-alignment
+    secure: false
+    fallback_dir: data/storage/objects
+    lifecycle:
+      enabled: false
+      expiry_days: 90
+
+  # 关系型数据库 (SQLite / DM8)
+  relational:
+    dialect: sqlite
+    database: data/storage/alignment.db
+    # DM8 连接参数（dialect=dm8 时生效）
+    # host: localhost
+    # port: 5236
+    # user: SYSDBA
+    # password: ""
+
+  # 图数据库 (Neo4j)
+  graph:
+    uri: bolt://localhost:7687
+    user: neo4j
+    password: neo4j
+    database: omics
+    fallback_dir: data/storage/graph
+
+# -----------------------------------------------------------------------------
 # 日志配置
 # -----------------------------------------------------------------------------
 logging:

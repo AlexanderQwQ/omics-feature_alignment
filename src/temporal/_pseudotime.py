@@ -110,7 +110,8 @@ class PseudotimeAligner(BaseTemporalAligner):
                     X = self._get_time_series(adata, "time")[1]
 
                 adata.obsm["X_temporal_aligned"] = X[pt_sorted]
-                adata.obs["aligned_time"] = np.arange(len(pt_sorted)).astype(float)
+                # P1-11: 使用实际的伪时间值而非无意义序号
+                adata.obs["aligned_time"] = pt[pt_sorted].astype(float)
 
                 pseudotime_log[mod_name] = {
                     "n_cells": adata.n_obs,
@@ -173,7 +174,11 @@ class PseudotimeAligner(BaseTemporalAligner):
 
             # 确定根细胞
             if root_cells is None:
-                root_idx = 0  # 自动选第一个细胞作为根
+                # P2-15: 使用 PCA 第一主成分最小值作为根（代表分化起点）
+                if "X_pca" in adata_tmp.obsm:
+                    root_idx = int(np.argmin(adata_tmp.obsm["X_pca"][:, 0]))
+                else:
+                    root_idx = 0  # fallback
             elif isinstance(root_cells, str) and root_cells in adata_tmp.obs.columns:
                 root_idx = int(np.argmax(adata_tmp.obs[root_cells].values))
             else:

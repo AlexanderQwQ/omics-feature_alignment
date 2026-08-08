@@ -2,12 +2,19 @@
 
 from ._evaluation import run_full_evaluation
 from ._integration import integrated_embedding, correlation_matrix
-from ._export import export_to_csv, export_report
+from ._export import (
+    export_to_csv,
+    export_time_indexed_matrix,
+    export_integrated_matrix,
+    export_report,
+)
 
 __all__ = [
     "run_full_evaluation",
     "integrated_embedding",
     "correlation_matrix",
     "export_to_csv",
+    "export_time_indexed_matrix",
+    "export_integrated_matrix",
     "export_report",
 ]

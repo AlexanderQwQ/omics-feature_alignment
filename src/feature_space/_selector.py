@@ -57,7 +57,7 @@ class FeatureSpaceSelector:
                 n_batches = adata.obs[batch_key].nunique()
                 n_batches_total = max(n_batches_total, n_batches)
 
-        # 检查特征空间异构性
+        # 检查特征空间异构性（P1-9: 使用变异系数 CV 替代原始方差）
         dims = []
         for adata in mdata.mod.values():
             if "X_temporal_aligned" in adata.obsm:
@@ -67,8 +67,9 @@ class FeatureSpaceSelector:
             else:
                 dims.append(adata.n_vars)
 
-        dim_variance = np.var(dims) if len(dims) > 1 else 0
-        heterogeneous = dim_variance > 100  # 维度方差大 = 异构空间
+        dims_arr = np.array(dims)
+        dim_cv = float(np.std(dims_arr) / (np.mean(dims_arr) + 1)) if len(dims) > 1 else 0.0
+        heterogeneous = dim_cv > 0.3  # 变异系数 > 0.3 = 异构特征空间
 
         # 检查样本对应关系
         n_obs_list = [adata.n_obs for adata in mdata.mod.values()]
@@ -80,7 +81,7 @@ class FeatureSpaceSelector:
             return "mnn"
 
         if heterogeneous and balanced_obs:
-            logg.info(f"FeatureSpaceSelector: 选择 CCA (异构空间, 样本均衡, dim_var={dim_variance:.1f})")
+            logg.info(f"FeatureSpaceSelector: 选择 CCA (异构空间 CV={dim_cv:.2f}, 样本均衡)")
             return "cca"
 
         if heterogeneous and not balanced_obs:

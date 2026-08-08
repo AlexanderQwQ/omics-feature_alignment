@@ -31,7 +31,6 @@ class DTWAligner(BaseTemporalAligner):
 
     def __init__(
         self,
-        backend: str = "tslearn",
         window_type: str = "sakoechiba",
         window_size: float = 0.1,
         metric: str = "euclidean",
@@ -41,7 +40,6 @@ class DTWAligner(BaseTemporalAligner):
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
-        self.backend = backend
         self.window_type = window_type
         self.window_size = window_size
         self.metric = metric
@@ -125,7 +123,6 @@ class DTWAligner(BaseTemporalAligner):
             mdata,
             method="dtw",
             params={
-                "backend": self.backend,
                 "window_type": window_type,
                 "window_size": window_size,
                 "metric": metric,
@@ -163,8 +160,17 @@ class DTWAligner(BaseTemporalAligner):
 
             # 多变量 DTW：使用完整的特征向量
             n_feat = min(X_a.shape[1], X_b.shape[1])
-            X_a_mv = X_a[:, :n_feat]
-            X_b_mv = X_b[:, :n_feat]
+            X_a_mv = X_a[:, :n_feat].copy()
+            X_b_mv = X_b[:, :n_feat].copy()
+
+            # P2-17: 加权 DTW — 按权重缩放时间点
+            if self.weights is not None:
+                w = np.asarray(self.weights, dtype=float)
+                w = w / np.sqrt(np.mean(w ** 2))  # 归一化以保持 scale
+                if len(w) == X_a_mv.shape[0]:
+                    X_a_mv = X_a_mv * w[:, np.newaxis]
+                if len(w) == X_b_mv.shape[0]:
+                    X_b_mv = X_b_mv * w[:, np.newaxis]
 
             kwargs = {"global_constraint": gc}
             if sc_radius is not None:

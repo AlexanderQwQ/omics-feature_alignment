@@ -64,26 +64,34 @@ class LagModelingAligner(BaseTemporalAligner):
 
         logg.info(f"时间延迟建模: {len(valid_mods)} 个模态, max_lag={max_lag}")
 
-        # 提取各模态的均值时间序列
-        mean_series = {}
+        # 提取各模态的 PCA 第一主成分时间序列（多变量检测）
+        pca_series = {}
         for mod_name in valid_mods:
             times, X = self._get_time_series(mdata.mod[mod_name], time_key)
-            mean_series[mod_name] = {
+            # 使用 PCA 第一主成分作为多变量代表序列
+            if X.shape[1] > 1:
+                from sklearn.decomposition import PCA
+                pca = PCA(n_components=1, random_state=42)
+                pc1 = pca.fit_transform(X)[:, 0]
+            else:
+                pc1 = X[:, 0]
+            pca_series[mod_name] = {
                 "times": times,
-                "mean": np.mean(X, axis=1),
+                "mean": np.mean(X, axis=1),  # 保留均值序列用于滑动窗口
+                "pc1": pc1,  # PCA 第一主成分用于滞后检测
             }
 
-        # 成对滞后分析
+        # 成对滞后分析（使用 PCA 第一主成分）
         lag_results: dict[str, dict] = {}
 
-        mod_names = list(mean_series.keys())
+        mod_names = list(pca_series.keys())
         for i in range(len(mod_names)):
             for j in range(i + 1, len(mod_names)):
                 mod_a, mod_b = mod_names[i], mod_names[j]
 
                 result = self._compute_lag_correlation(
-                    mean_series[mod_a]["mean"],
-                    mean_series[mod_b]["mean"],
+                    pca_series[mod_a]["pc1"],
+                    pca_series[mod_b]["pc1"],
                     max_lag,
                     method,
                 )
@@ -100,9 +108,9 @@ class LagModelingAligner(BaseTemporalAligner):
                         f"    建议: {mod_a} → {mod_b} 偏移 {result['optimal_lag']} 步"
                     )
 
-        # 滑动窗口相关分析
+        # 滑动窗口相关分析（使用均值序列）
         window_correlations = self._sliding_window_correlation(
-            mean_series, valid_mods, window_size, method,
+            pca_series, valid_mods, window_size, method,
         )
 
         # 存储结果
@@ -121,7 +129,7 @@ class LagModelingAligner(BaseTemporalAligner):
             },
         )
 
-        # 应用滞后校正
+        # 应用滞后校正：调整时间标签而非破坏数据矩阵
         for mod_name in valid_mods:
             adata = mdata.mod[mod_name]
             _, X = self._get_time_series(adata, time_key)
@@ -134,17 +142,31 @@ class LagModelingAligner(BaseTemporalAligner):
                     if abs(lag) > abs(best_lag):
                         best_lag = lag
 
+            # 保留数据矩阵不破坏
+            adata.obsm["X_temporal_aligned"] = X
+
             if best_lag != 0:
-                # 按滞后偏移矩阵行
-                X_shifted = np.zeros_like(X)
-                if best_lag > 0:
-                    X_shifted[best_lag:] = X[:-best_lag]
+                # 估算平均时间间隔
+                times = adata.obs[time_key].values.astype(float) if time_key in adata.obs.columns else None
+                if times is not None and len(np.unique(times)) > 1:
+                    avg_interval = np.median(np.diff(np.unique(times)))
                 else:
-                    X_shifted[:best_lag] = X[-best_lag:]
-                adata.obsm["X_temporal_aligned"] = X_shifted
-                logg.hint(f"  [{mod_name}]: 应用滞后偏移 {best_lag} 步")
+                    avg_interval = 1.0
+
+                # 对时间标签应用滞后偏移（不破坏数据行）
+                if time_key in adata.obs.columns:
+                    adata.obs["aligned_time"] = adata.obs[time_key].values.astype(float) + best_lag * avg_interval
+                else:
+                    adata.obs["aligned_time"] = np.arange(len(X)).astype(float) + best_lag * avg_interval
+                adata.obs["lag_shift_applied"] = best_lag
+                logg.hint(f"  [{mod_name}]: 时间标签偏移 {best_lag} 步 ({best_lag * avg_interval:.2f} time units)")
             else:
-                adata.obsm["X_temporal_aligned"] = X
+                # 无滞后时保持原时间
+                if "aligned_time" not in adata.obs.columns:
+                    if time_key in adata.obs.columns:
+                        adata.obs["aligned_time"] = adata.obs[time_key].values.astype(float)
+                    else:
+                        adata.obs["aligned_time"] = np.arange(len(X)).astype(float)
 
         logg.info(f"延迟建模完成: {len(lag_results)} 对模态")
         return mdata
@@ -176,7 +198,11 @@ class LagModelingAligner(BaseTemporalAligner):
                 corr = self._correlation(a, b, method)
             correlations.append({"lag": int(lag), "correlation": float(corr)})
 
-        best = max(correlations, key=lambda x: abs(x["correlation"]))
+        # P1-10: 互信息的 scale 与其他方法不同，单独处理比较
+        if method == "mutual_info":
+            best = max(correlations, key=lambda x: x["correlation"])
+        else:
+            best = max(correlations, key=lambda x: abs(x["correlation"]))
         return {
             "optimal_lag": best["lag"],
             "max_correlation": best["correlation"],

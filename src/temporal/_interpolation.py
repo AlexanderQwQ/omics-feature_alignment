@@ -163,9 +163,8 @@ class InterpolationAligner(BaseTemporalAligner):
             else:
                 anchor_values[i] = X[np.argmin(np.abs(times - t))]
 
-        # 对每个特征维度构建插值器并评估
-        n_features_process = min(n_features, 200)  # 限制特征数以控制性能
-        for f in range(n_features_process):
+        # 对每个特征维度构建插值器并评估（处理全部特征）
+        for f in range(n_features):
             y_anchor = anchor_values[:, f]
 
             # 移除重复
@@ -185,11 +184,19 @@ class InterpolationAligner(BaseTemporalAligner):
                         t_u, y_u, kind="linear",
                         fill_value="extrapolate", bounds_error=False,
                     )
+                elif method == "loess":
+                    interp_fn = self._build_loess_interpolator(t_u, y_u, times)
+                    if interp_fn is None:
+                        # loess 失败时回退到 spline
+                        interp_fn = CubicSpline(t_u, y_u, extrapolate=True)
                 else:
-                    # loess fallback: use spline
+                    # 未知方法回退到 spline
                     interp_fn = CubicSpline(t_u, y_u, extrapolate=True)
 
-                X_aligned[:, f] = interp_fn(times)
+                if method == "loess" and interp_fn is not None and hasattr(interp_fn, "__call__"):
+                    X_aligned[:, f] = interp_fn(times)
+                else:
+                    X_aligned[:, f] = interp_fn(times)
 
             except Exception:
                 # 回退到线性插值，再失败就用最近邻
@@ -202,14 +209,40 @@ class InterpolationAligner(BaseTemporalAligner):
                 except Exception:
                     X_aligned[:, f] = X[:, f]
 
-        # 对超出处理范围的特征维度直接复制
-        if n_features > n_features_process:
-            X_aligned[:, n_features_process:] = X[:, n_features_process:]
+        # 标记原始观测：判断插值前后值是否发生变化
+        # 对每个特征维度，若插值后的值与原始值差异大于容差，标记为插值点
+        is_interpolated_mask = np.zeros(n_obs, dtype=bool)
+        eps = 1e-8
+        for f in range(min(n_features, 100)):  # 采样前100维做标记判断
+            diff = np.abs(X_aligned[:, f] - X[:, f])
+            is_interpolated_mask |= (diff > eps)
 
-        # 标记原始观测（时间点接近锚点）
-        tolerance = np.median(np.diff(unique_times)) * 0.1 if len(unique_times) > 1 else 1.0
-        for i, t in enumerate(times):
-            if np.any(np.abs(unique_times - t) < tolerance):
-                is_original[i] = True
+        # 标记原始观测（插值前后的值无变化）
+        is_original = ~is_interpolated_mask
 
         return X_aligned, is_original
+
+    @staticmethod
+    def _build_loess_interpolator(
+        t_u: np.ndarray, y_u: np.ndarray, eval_times: np.ndarray,
+    ):
+        """使用 statsmodels LOWESS 构建 loess 插值器。
+
+        返回一个可调用对象，在给定时间点上返回 loess 平滑值。
+        若 statsmodels 不可用，返回 None。
+        """
+        try:
+            from statsmodels.nonparametric.smoothers_lowess import lowess
+
+            # 在锚点上拟合 loess
+            frac = max(0.2, min(1.0, 3.0 / len(t_u)))  # 自适应带宽
+            smoothed = lowess(y_u, t_u, frac=frac, return_sorted=True)
+
+            # 构建基于 loess 结果的插值函数
+            from scipy.interpolate import interp1d
+            return interp1d(
+                smoothed[:, 0], smoothed[:, 1],
+                kind="linear", fill_value="extrapolate", bounds_error=False,
+            )
+        except ImportError:
+            return None

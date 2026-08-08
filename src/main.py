@@ -78,13 +78,15 @@ def main(argv: list[str] | None = None) -> int:
 
                 mdata = normalize_time_scales(mdata)
                 selector = TemporalSelector()
-                mdata = selector.run(mdata)
+                # 接入 CLI --temporal 参数
+                mdata = selector.run(mdata, method=args.temporal_method)
 
             elif args.only == "feature_space":
                 from feature_space import FeatureSpaceSelector
 
                 selector = FeatureSpaceSelector()
-                mdata = selector.run(mdata)
+                # 接入 CLI --feature-space 参数
+                mdata = selector.run(mdata, method=args.feature_space_method)
 
             elif args.only == "evaluate":
                 from tools._evaluation import run_full_evaluation
@@ -100,7 +102,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"已保存: {output_dir / 'aligned.h5mu'}")
 
         else:
-            # 全流程
+            # 全流程 — 接入 CLI 方法覆写参数到 settings
+            if args.temporal_method:
+                settings._config.setdefault("temporal", {})["method"] = args.temporal_method
+            if args.feature_space_method:
+                settings._config.setdefault("feature_space", {})["method"] = args.feature_space_method
+
             mdata = pipeline.run(
                 input_path=Path(input_path) if input_path else None,
                 output_path=Path(output_path) if output_path else None,

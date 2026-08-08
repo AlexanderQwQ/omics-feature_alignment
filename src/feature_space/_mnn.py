@@ -74,6 +74,7 @@ class MNNAligner(BaseFeatureAligner):
         logg.info(f"MNN 对齐: {len(mdata.mod)} 个模态, {len(all_batches)} 个批次, k={n_neighbors}")
 
         mnn_log: dict[str, dict] = {}
+        all_offset_vectors: dict[str, dict] = {}
 
         for mod_name, adata in mdata.mod.items():
             if batch_key not in adata.obs.columns:
@@ -82,7 +83,7 @@ class MNNAligner(BaseFeatureAligner):
                 continue
 
             try:
-                X_corrected = self._run_mnn_correction(
+                X_corrected, offsets = self._run_mnn_correction(
                     adata, batch_key, n_neighbors, sigma,
                 )
                 adata.obsm["X_feature_aligned"] = X_corrected
@@ -91,11 +92,21 @@ class MNNAligner(BaseFeatureAligner):
                     "n_batches": int(adata.obs[batch_key].nunique()),
                     "feature_dim": X_corrected.shape[1],
                 }
+                if offsets:
+                    all_offset_vectors[mod_name] = offsets
                 logg.hint(f"  [{mod_name}]: corrected {adata.n_obs} obs × {X_corrected.shape[1]} dims")
 
             except Exception as e:
                 logg.error(f"[{mod_name}] MNN 校正失败: {e}，使用原始矩阵")
                 adata.obsm["X_feature_aligned"] = self._get_feature_matrix(adata)
+
+        extra = {
+            "n_batches_total": len(all_batches),
+            "mnn_log": mnn_log,
+            "stored_in_obsm": "X_feature_aligned",
+        }
+        if all_offset_vectors:
+            extra["mnn_offset_vectors"] = all_offset_vectors
 
         self._store_trace(
             mdata,
@@ -106,11 +117,7 @@ class MNNAligner(BaseFeatureAligner):
                 "var_adj": self.var_adj,
                 "batch_key": batch_key,
             },
-            extra={
-                "n_batches_total": len(all_batches),
-                "mnn_log": mnn_log,
-                "stored_in_obsm": "X_feature_aligned",
-            },
+            extra=extra,
         )
 
         logg.info(f"MNN 对齐完成: {len(mnn_log)} 个模态")
@@ -122,8 +129,12 @@ class MNNAligner(BaseFeatureAligner):
         batch_key: str,
         n_neighbors: int,
         sigma: float,
-    ) -> np.ndarray:
-        """对单个 AnnData 执行 MNN 批次校正"""
+    ) -> tuple[np.ndarray, dict | None]:
+        """对单个 AnnData 执行 MNN 批次校正。
+
+        Returns:
+            (X_corrected, offset_vectors_dict | None)
+        """
         try:
             import scanpy as sc
             import scanpy.external as sce
@@ -148,29 +159,40 @@ class MNNAligner(BaseFeatureAligner):
                 cos_norm_out=self.cos_norm_out,
             )
 
-            return np.asarray(adata_ref.X)
+            return np.asarray(adata_ref.X), None  # scanpy MNN 不产生显式偏移向量
 
         except ImportError:
-            logg.warning("scanpy.external 不可用，使用简化 MNN fallback")
-            return self._fallback_mnn(adata, batch_key, n_neighbors)
+            logg.warning("scanpy.external 不可用，使用批次均值中心化 (batch mean-centering)")
+            return self._batch_mean_shift(adata, batch_key)
 
-    def _fallback_mnn(
+    def _batch_mean_shift(
         self,
         adata: AnnData,
         batch_key: str,
-        n_neighbors: int,
-    ) -> np.ndarray:
-        """简化的 MNN fallback：对每个批次做均值中心化"""
+    ) -> tuple[np.ndarray, dict]:
+        """批次均值中心化：按批次减去均值偏移。
+
+        注：这不是真正的 MNN 校正，而是简化的批次效应消除。
+        仅在 scanpy MNN 不可用时作为降级方案。
+
+        Returns:
+            (X_corrected, offset_vectors_dict)
+        """
         X = self._get_feature_matrix(adata)
         batches = adata.obs[batch_key].values
         X_corrected = X.copy()
 
         global_mean = np.mean(X, axis=0)
+        offset_vectors: dict[str, dict] = {}
 
         for batch in np.unique(batches):
             mask = batches == batch
             batch_mean = np.mean(X[mask], axis=0)
             shift = batch_mean - global_mean
             X_corrected[mask] = X[mask] - shift
+            offset_vectors[str(batch)] = {
+                "norm": float(np.linalg.norm(shift)),
+                "n_samples": int(mask.sum()),
+            }
 
-        return X_corrected
+        return X_corrected, offset_vectors

@@ -49,11 +49,11 @@ class TemporalSelector:
         """检查数据特征，返回推荐的方法名。
 
         Returns:
-            "dtw" | "interpolation" | "pseudotime" | "lag" | "dtw+interpolation"
+            "dtw" | "interpolation" | "pseudotime" | "lag"
         """
         n_time_modalities = 0
         total_time_points = 0
-        has_single_cell = False
+        time_point_counts: list[int] = []
         has_large_n_obs = False
 
         for mod_name, adata in mdata.mod.items():
@@ -61,24 +61,39 @@ class TemporalSelector:
                 n_time_modalities += 1
                 n_unique = len(np.unique(adata.obs[time_key].values))
                 total_time_points += n_unique
+                time_point_counts.append(n_unique)
 
-            # 检测单细胞数据（观测数 > 200）
-            if adata.n_obs > 200:
-                has_single_cell = True
+            # P1-9: 更准确的单细胞检测（大观测数 + 无时间 + 无批次）
+            if (adata.n_obs > 500
+                    and time_key not in adata.obs.columns
+                    and "batch" not in adata.obs.columns):
                 has_large_n_obs = True
 
+        # P1-9: 检测跨模态响应滞后
+        has_lag = self._detect_lag(mdata, time_key)
+
         # 决策逻辑
-        if has_single_cell and n_time_modalities == 0:
-            logg.info("TemporalSelector: 选择 pseudotime（单细胞数据, 无统一采样时间）")
+        if has_large_n_obs and n_time_modalities == 0:
+            logg.info("TemporalSelector: 选择 pseudotime（大观测数, 无统一采样时间）")
             return "pseudotime"
 
         if n_time_modalities >= 2:
-            avg_points = total_time_points / n_time_modalities if n_time_modalities > 0 else 0
-            if avg_points >= 5:
-                logg.info(f"TemporalSelector: 选择 dtw（每模态平均 {avg_points:.1f} 个时间点）")
+            avg_points = total_time_points / n_time_modalities
+            # 检查时间分布是否均衡：各模态时间点数的 max/min
+            if time_point_counts:
+                min_pts, max_pts = min(time_point_counts), max(time_point_counts)
+                balanced = min_pts > 0 and (max_pts / min_pts) <= 3.0
+            else:
+                balanced = True
+
+            if avg_points >= 5 and balanced:
+                if has_lag:
+                    logg.info(f"TemporalSelector: 选择 dtw+lag（avg={avg_points:.1f} pts, 检测到跨模态滞后）")
+                    return "lag"
+                logg.info(f"TemporalSelector: 选择 dtw（平均 {avg_points:.1f} 个时间点, 分布均衡）")
                 return "dtw"
             else:
-                logg.info(f"TemporalSelector: 选择 interpolation（每模态平均 {avg_points:.1f} 个时间点）")
+                logg.info(f"TemporalSelector: 选择 interpolation（平均 {avg_points:.1f} 个时间点）")
                 return "interpolation"
 
         if n_time_modalities >= 1:
@@ -87,6 +102,66 @@ class TemporalSelector:
 
         logg.info("TemporalSelector: 回退到 pseudotime")
         return "pseudotime"
+
+    def _detect_lag(self, mdata: MuData, time_key: str) -> bool:
+        """检测跨模态是否存在显著的响应滞后。
+
+        对每对模态的均值时间序列计算滞后相关，
+        若最优滞后 > 1 且相关系数 > 0.3，认为存在滞后。
+        """
+        import numpy as np
+
+        valid_mods = [
+            name for name, adata in mdata.mod.items()
+            if time_key in adata.obs.columns
+        ]
+        if len(valid_mods) < 2:
+            return False
+
+        # 提取各模态按时间排序的均值序列
+        series = {}
+        for mod_name in valid_mods:
+            adata = mdata.mod[mod_name]
+            times = adata.obs[time_key].values.astype(float)
+            sorted_idx = np.argsort(times)
+            if "X_corrected" in adata.obsm:
+                X = np.asarray(adata.obsm["X_corrected"])[sorted_idx]
+            elif "X_temporal_aligned" in adata.obsm:
+                X = np.asarray(adata.obsm["X_temporal_aligned"])[sorted_idx]
+            else:
+                X_data = adata.X.toarray() if hasattr(adata.X, "toarray") else adata.X
+                X = np.asarray(X_data)[sorted_idx]
+            series[mod_name] = np.mean(X, axis=1)
+
+        mod_names = list(series.keys())
+        for i in range(len(mod_names)):
+            for j in range(i + 1, len(mod_names)):
+                a = series[mod_names[i]]
+                b = series[mod_names[j]]
+                min_len = min(len(a), len(b))
+                a, b = a[:min_len], b[:min_len]
+                if min_len < 5:
+                    continue
+
+                # 简单滞后检测
+                best_lag, best_corr = 0, 0.0
+                for lag in range(1, min(4, min_len // 2)):
+                    try:
+                        corr = float(np.corrcoef(a[lag:], b[:-lag])[0, 1])
+                        if abs(corr) > abs(best_corr):
+                            best_corr = abs(corr)
+                            best_lag = lag
+                    except Exception:
+                        pass
+
+                if best_lag > 1 and best_corr > 0.3:
+                    logg.hint(
+                        f"  Lag detection: {mod_names[i]}_{mod_names[j]} "
+                        f"lag={best_lag}, corr={best_corr:.3f}"
+                    )
+                    return True
+
+        return False
 
     def run(
         self,

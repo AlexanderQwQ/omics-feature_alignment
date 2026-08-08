@@ -116,6 +116,14 @@ class DynamicAlignmentPipeline:
         self._steps.append("temporal")
         mdata.uns["alignment"]["steps_executed"].append("temporal")
 
+        # P2-14: 构建并记录统一时间网格
+        from utils._time_utils import build_common_time_grid
+        common_grid = build_common_time_grid(mdata, time_key="aligned_time", method="union")
+        if "temporal" not in mdata.uns.get("alignment", {}):
+            mdata.uns["alignment"]["temporal"] = {}
+        mdata.uns["alignment"]["temporal"]["common_time_grid"] = common_grid.tolist()
+        logg.hint(f"统一时间网格: {len(common_grid)} 个时间点")
+
         # Step 3: 阶段二 — 特征空间校正
         logg.info("--- 阶段二：特征空间补充校正 ---")
         mdata = self._step_feature_space(mdata)
@@ -192,20 +200,18 @@ class DynamicAlignmentPipeline:
         return selector.run(mdata, method=method, batch_key="batch")
 
     def _snapshot_before(self, mdata: MuData) -> MuData:
-        """在对齐前保存基线快照，供 before/after 对比评估使用。"""
+        """在对齐前保存基线快照，供 before/after 对比评估使用。
+
+        P2-13: 直接传入 X_corrected layer 进行评估，不再覆写 obsm keys。
+        """
         from evaluation._cross_modality import evaluate_cross_modality_correlation
         from evaluation._distribution import evaluate_distribution_consistency
         from evaluation._time_consistency import evaluate_time_consistency
 
-        # 临时使用未对齐的数据做基线评估
-        for mod_name, adata in mdata.mod.items():
-            if "X_corrected" in adata.obsm:
-                adata.obsm["X_temporal_aligned"] = np.asarray(adata.obsm["X_corrected"])
-                adata.obsm["X_feature_aligned"] = np.asarray(adata.obsm["X_corrected"])
-
-        time_before = evaluate_time_consistency(mdata)
-        dist_before = evaluate_distribution_consistency(mdata)
-        cross_before = evaluate_cross_modality_correlation(mdata)
+        # 使用 X_corrected 作为源矩阵做基线评估
+        time_before = evaluate_time_consistency(mdata, layer_key="X_corrected")
+        dist_before = evaluate_distribution_consistency(mdata, layer_key="X_corrected")
+        cross_before = evaluate_cross_modality_correlation(mdata, layer_key="X_corrected")
 
         mdata.uns["alignment"]["before"] = {
             "time_consistency": time_before,
@@ -228,10 +234,13 @@ class DynamicAlignmentPipeline:
         mdata.write(str(output_file))
         logg.info(f"已保存: {output_file}")
 
-        # 导出 CSV
+        # 导出 CSV（观测级 + 时间索引级）
         if settings.output.get("export_matrix", True):
             csv_dir = output_dir / "csv"
             export_to_csv(mdata, csv_dir)
+            from tools._export import export_time_indexed_matrix, export_integrated_matrix
+            export_time_indexed_matrix(mdata, csv_dir)
+            export_integrated_matrix(mdata, csv_dir)
 
         # 导出报告
         if settings.output.get("export_report", True):

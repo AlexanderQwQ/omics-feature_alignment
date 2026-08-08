@@ -97,6 +97,31 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "per_modality_subdir": True,
         "combined_filename": "aligned",
     },
+    "storage": {
+        "minio": {
+            "endpoint": "localhost:9000",
+            "access_key": "minioadmin",
+            "secret_key": "minioadmin",
+            "bucket": "omics-alignment",
+            "secure": False,
+            "fallback_dir": "data/storage/objects",
+            "lifecycle": {
+                "enabled": False,
+                "expiry_days": 90,
+            },
+        },
+        "relational": {
+            "dialect": "sqlite",
+            "database": "data/storage/alignment.db",
+        },
+        "graph": {
+            "uri": "bolt://localhost:7687",
+            "user": "neo4j",
+            "password": "neo4j",
+            "database": "omics",
+            "fallback_dir": "data/storage/graph",
+        },
+    },
     "logging": {
         "level": "info",
         "to_file": True,
@@ -137,6 +162,10 @@ class Settings:
     @property
     def feature_space(self) -> dict:
         return self._config.get("feature_space", {})
+
+    @property
+    def storage(self) -> dict:
+        return self._config.get("storage", {})
 
     @property
     def output(self) -> dict:

@@ -68,57 +68,58 @@ class CCAAligner(BaseFeatureAligner):
         for mod_name in mod_names:
             matrices[mod_name] = self._get_feature_matrix(mdata.mod[mod_name])
 
-        # 选择参考模态（特征维度最大的）
+        # P1-7: 选择参考模态（特征维度最大的），构建统一共享空间
         ref_mod = max(mod_names, key=lambda m: matrices[m].shape[1])
 
-        # 成对 CCA 并收集变换结果
+        # 每个非参考模态分别与参考模态做 CCA
+        # 参考模态使用 PCA 作为共享空间（避免多对 CCA 导致的 n_obs 不一致）
         cca_results: dict[str, dict] = {}
         aligned_projections: dict[str, np.ndarray] = {}
 
-        for i in range(len(mod_names)):
-            mod_a = mod_names[i]
-            X_a = matrices[mod_a]
-            for j in range(i + 1, len(mod_names)):
-                mod_b = mod_names[j]
-                X_b = matrices[mod_b]
+        # 参考模态用 PCA 降维到共享空间维度
+        from sklearn.decomposition import PCA
+        X_ref = matrices[ref_mod]
+        n_comp_ref = min(n_components, X_ref.shape[1], X_ref.shape[0] - 1)
+        n_comp_ref = max(1, n_comp_ref)
+        pca = PCA(n_components=n_comp_ref, random_state=42)
+        aligned_projections[ref_mod] = pca.fit_transform(X_ref)
 
-                n_samples = min(X_a.shape[0], X_b.shape[0])
-                max_comps = min(n_components, X_a.shape[1], X_b.shape[1], n_samples - 1)
-                max_comps = max(1, max_comps)
+        for mod_name in mod_names:
+            if mod_name == ref_mod:
+                continue
 
-                try:
-                    result = self._fit_cca(
-                        X_a[:n_samples], X_b[:n_samples],
-                        max_comps, scale, regularization,
-                    )
-                    pair_key = f"{mod_a}_{mod_b}"
-                    cca_results[pair_key] = result
-                    logg.hint(
-                        f"  {pair_key}: {max_comps} 成分, "
-                        f"平均典型相关={result['mean_correlation']:.4f}, "
-                        f"rCCA={result.get('regularized', False)}"
-                    )
+            X_b = matrices[mod_name]
+            n_samples = min(X_ref.shape[0], X_b.shape[0])
+            max_comps = min(n_components, n_comp_ref, X_b.shape[1], n_samples - 1)
+            max_comps = max(1, max_comps)
 
-                    # 存储 CCA 变换后的坐标（取每个对的投影）
-                    if "X_a_transformed" in result:
-                        if mod_a not in aligned_projections:
-                            aligned_projections[mod_a] = result["X_a_transformed"]
-                        if mod_b not in aligned_projections:
-                            aligned_projections[mod_b] = result["X_b_transformed"]
+            try:
+                result = self._fit_cca(
+                    X_ref[:n_samples], X_b[:n_samples],
+                    max_comps, scale, regularization,
+                )
+                pair_key = f"{ref_mod}_{mod_name}"
+                cca_results[pair_key] = result
+                logg.hint(
+                    f"  {pair_key}: {max_comps} 成分, "
+                    f"平均典型相关={result['mean_correlation']:.4f}, "
+                    f"rCCA={result.get('regularized', False)}"
+                )
 
-                except Exception as e:
-                    logg.error(f"  {mod_a}-{mod_b} CCA 失败: {e}")
+                # 存储非参考模态的 CCA 投影
+                aligned_projections[mod_name] = result["X_b_transformed"]
+
+            except Exception as e:
+                logg.error(f"  {ref_mod}-{mod_name} CCA 失败: {e}")
 
         # 将 CCA 变换写入各模态
         for mod_name in mod_names:
             adata = mdata.mod[mod_name]
             if mod_name in aligned_projections:
-                # CCA 变换后的共享空间坐标
                 proj = aligned_projections[mod_name]
                 adata.obsm["X_feature_aligned"] = proj
             else:
                 # 没有成功对齐的模态：用 PCA 降维作为后备
-                from sklearn.decomposition import PCA
                 X = matrices[mod_name]
                 pca = PCA(
                     n_components=min(n_components, X.shape[1], X.shape[0] - 1),
@@ -170,25 +171,29 @@ class CCAAligner(BaseFeatureAligner):
             canonical_corrs = np.asarray(test_result) if test_result is not None else np.zeros(n_components)
             regularized = True
 
-            # pyrcca 变换需要 compute_weights
-            # 直接在训练数据上获取变换
-            outputs = cca.compute_weights([X_a, X_b])  # noqa: F841
+            # 使用 rCCA 权重直接计算变换后的坐标
+            # rCCA 的 compute_weights 返回的是投影后的数据
+            outputs = cca.compute_weights([X_a, X_b])
+            X_a_c = np.asarray(outputs[0]) if outputs[0] is not None else np.zeros((X_a.shape[0], n_components))
+            X_b_c = np.asarray(outputs[1]) if outputs[1] is not None else np.zeros((X_b.shape[0], n_components))
 
-            # 使用 sklearn CCA 来做实际变换（rCCA 的权重在内部）
-            # 为了一致性，用标准 CCA 获取变换坐标
-            cca_std = CCA(n_components=n_components, scale=False, max_iter=1000)
-            X_a_c, X_b_c = cca_std.fit_transform(X_a, X_b)
+            # 确保维度正确
+            if X_a_c.shape[1] != n_components:
+                X_a_c = X_a_c[:, :n_components]
+            if X_b_c.shape[1] != n_components:
+                X_b_c = X_b_c[:, :n_components]
 
             corrs = np.array([
                 np.corrcoef(X_a_c[:, k], X_b_c[:, k])[0, 1]
-                for k in range(X_a_c.shape[1])
+                for k in range(min(X_a_c.shape[1], X_b_c.shape[1]))
             ])
 
             return {
                 "n_components": n_components,
                 "canonical_correlations": corrs.tolist(),
-                "mean_correlation": float(np.mean(np.abs(corrs))),
+                "mean_correlation": float(np.mean(np.abs(corrs))) if len(corrs) > 0 else 0.0,
                 "regularized": True,
+                "regularization_weights_applied": True,
                 "X_a_transformed": X_a_c,
                 "X_b_transformed": X_b_c,
             }

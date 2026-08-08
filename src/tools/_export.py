@@ -24,17 +24,18 @@ def export_to_csv(
     output_dir: str | Path,
     layer_key: str = "X_feature_aligned",
     modalities: list[str] | None = None,
+    max_dims: int | None = None,
 ) -> list[Path]:
     """将对齐后的特征矩阵导出为 CSV 文件。
 
-    按时间/过程索引的特征矩阵，每行对应一个时间点，
-    每列对应特征向量维度，附带元数据列。
+    每行对应一个观测（cell/sample），每列对应特征向量维度。
 
     Args:
         mdata: 已对齐的 MuData
         output_dir: 输出目录
         layer_key: 要导出的矩阵键名
         modalities: 导出的模态列表（None=全部）
+        max_dims: 最大导出维度数（None=不截断）
 
     Returns:
         导出的文件路径列表
@@ -55,16 +56,21 @@ def export_to_csv(
             continue
 
         X = np.asarray(adata.obsm[layer_key])
+        n_dims = X.shape[1] if max_dims is None else min(X.shape[1], max_dims)
+
+        if max_dims is not None and X.shape[1] > max_dims:
+            logg.warning(f"[{mod_name}] 特征维度 {X.shape[1]} > max_dims={max_dims}，截断到 {max_dims} 维")
 
         # 构建 DataFrame
         df_data = {}
-        for k in range(min(X.shape[1], 50)):  # 最多导出 50 维
+        for k in range(n_dims):
             df_data[f"dim_{k + 1}"] = X[:, k]
 
         df = pd.DataFrame(df_data)
 
         # 添加元数据列
-        for col in ["aligned_time", "time", "condition", "batch", "is_interpolated"]:
+        for col in ["aligned_time", "time", "condition", "batch", "is_interpolated",
+                     "pseudotime", "process_stage"]:
             if col in adata.obs.columns:
                 df[col] = adata.obs[col].values
 
@@ -79,6 +85,150 @@ def export_to_csv(
         logg.hint(f"导出: {file_path} ({df.shape[0]} 行 × {df.shape[1]} 列)")
 
     return exported
+
+
+def export_time_indexed_matrix(
+    mdata: MuData,
+    output_dir: str | Path,
+    layer_key: str = "X_feature_aligned",
+    time_key: str = "aligned_time",
+    stage_key: str = "process_stage",
+    modalities: list[str] | None = None,
+    max_dims: int | None = None,
+) -> list[Path]:
+    """导出以时间/过程为索引的结构化特征矩阵。
+
+    按时间点或过程阶段聚合（均值），满足需求文档：
+    "每一行对应一个时间点或阶段位置，每一列对应特征向量维度"。
+
+    Args:
+        mdata: 已对齐的 MuData
+        output_dir: 输出目录
+        layer_key: 对齐后矩阵的 obsm 键名
+        time_key: 时间列名（用于时间索引聚合）
+        stage_key: 阶段列名（用于伪时间阶段聚合）
+        modalities: 导出的模态列表
+        max_dims: 最大维度数
+
+    Returns:
+        导出的文件路径列表
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    exported = []
+
+    mods = modalities or list(mdata.mod.keys())
+
+    for mod_name in mods:
+        if mod_name not in mdata.mod:
+            continue
+        adata = mdata.mod[mod_name]
+
+        if layer_key not in adata.obsm:
+            continue
+
+        X = np.asarray(adata.obsm[layer_key])
+        n_dims = X.shape[1] if max_dims is None else min(X.shape[1], max_dims)
+
+        # 确定索引列：优先用时间，其次用阶段
+        df = pd.DataFrame()
+        use_time = time_key in adata.obs.columns and adata.obs[time_key].nunique() > 1
+        use_stage = not use_time and stage_key in adata.obs.columns
+
+        if use_time:
+            df["time_index"] = adata.obs[time_key].values
+            # 按四舍五入到有效数字来分组
+            df["time_bin"] = np.round(adata.obs[time_key].values.astype(float), decimals=2)
+            group_col = "time_bin"
+            index_name = "time_point"
+        elif use_stage:
+            df["stage_index"] = adata.obs[stage_key].values
+            group_col = "stage_index"
+            index_name = "process_stage"
+        else:
+            # 无时间/阶段列，生成观测级 CSV（不聚合）
+            logg.warning(f"[{mod_name}] 无时间/阶段列，跳过时间索引导出")
+            continue
+
+        # 添加特征列
+        for k in range(n_dims):
+            df[f"dim_{k + 1}"] = X[:, k]
+
+        # 按索引列分组聚合（均值）
+        grouped = df.groupby(group_col).mean()
+
+        # 添加元数据
+        grouped.index.name = index_name
+        grouped["modality"] = mod_name
+        grouped["n_observations"] = df.groupby(group_col).size().values
+
+        # 保存
+        file_path = output_dir / f"{mod_name}_time_indexed_features.csv"
+        grouped.to_csv(file_path)
+        exported.append(file_path)
+        logg.hint(f"导出时间索引矩阵: {file_path} ({grouped.shape[0]} 个时间点 × {grouped.shape[1]} 列)")
+
+    return exported
+
+
+def export_integrated_matrix(
+    mdata: MuData,
+    output_dir: str | Path,
+    max_dims: int | None = None,
+) -> Path | None:
+    """导出跨模态统一拼接特征矩阵。
+
+    从 mdata.uns["alignment"] 中读取集成后的矩阵并导出。
+
+    Args:
+        mdata: 已对齐的 MuData
+        output_dir: 输出目录
+        max_dims: 最大维度数
+
+    Returns:
+        导出文件路径，若无集成矩阵则返回 None
+    """
+    alignment = mdata.uns.get("alignment", {})
+
+    # 尝试从 alignment 中读取集成矩阵
+    integrated = alignment.get("X_pca_integrated")
+    if integrated is None:
+        logg.warning("无集成矩阵可导出（请先运行 integrated_embedding）")
+        return None
+
+    if hasattr(integrated, "toarray"):
+        integrated = integrated.toarray()
+    X = np.asarray(integrated)
+    n_dims = X.shape[1] if max_dims is None else min(X.shape[1], max_dims)
+
+    df_data = {}
+    for k in range(n_dims):
+        df_data[f"integrated_dim_{k + 1}"] = X[:, k]
+    df = pd.DataFrame(df_data)
+
+    # 添加元数据（从 alignment 中获取模态顺序，标注每行来源）
+    modality_sources = alignment.get("integrated_modality_order", list(mdata.mod.keys()))
+    modality_labels = []
+    for mod_name in modality_sources:
+        if mod_name in mdata.mod:
+            n = mdata.mod[mod_name].n_obs
+            modality_labels.extend([mod_name] * n)
+
+    # 截断到实际行数
+    if len(modality_labels) > len(df):
+        modality_labels = modality_labels[:len(df)]
+    elif len(modality_labels) < len(df):
+        modality_labels.extend(["unknown"] * (len(df) - len(modality_labels)))
+
+    df["modality"] = modality_labels
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    file_path = output_dir / "integrated_features.csv"
+    df.to_csv(file_path, index=False)
+    logg.hint(f"导出集成矩阵: {file_path} ({df.shape[0]} 行 × {df.shape[1]} 列)")
+
+    return file_path
 
 
 def export_report(

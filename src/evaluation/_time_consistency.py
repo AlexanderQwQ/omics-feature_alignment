@@ -93,14 +93,73 @@ def evaluate_time_consistency(
 
     metrics["time_ordering_consistency"] = float(np.mean(ordering_scores)) if ordering_scores else 0.0
 
+    # 计算对齐后的成对 DTW 距离
+    dtw_after = _compute_pairwise_dtw_distances(mean_series, mod_names)
+
     # before/after 对比
     before_data = mdata.uns.get("alignment", {}).get("before", {}).get("time_consistency", {})
     before_sim = before_data.get("sequence_similarity_score")
     if before_sim is not None and metrics["sequence_similarity_score"] is not None:
         metrics["similarity_gain"] = round(metrics["sequence_similarity_score"] - before_sim, 4)
 
+    # DTW 距离缩减：从 before 快照读取对齐前 DTW 距离
+    before_dtw = before_data.get("dtw_distance_matrix", {})
+    if before_dtw and dtw_after:
+        reductions = []
+        for pair_key, after_dist in dtw_after.items():
+            before_dist = before_dtw.get(pair_key)
+            if before_dist is not None and before_dist > 0:
+                reductions.append((before_dist - after_dist) / before_dist)
+        if reductions:
+            metrics["dtw_distance_reduction"] = round(float(np.mean(reductions)), 4)
+        else:
+            metrics["dtw_distance_reduction"] = 0.0
+    elif dtw_after:
+        # 无 before 快照时，仅记录对齐后的 DTW 距离
+        metrics["dtw_distance_reduction"] = 0.0
+
+    metrics["dtw_distance_matrix"] = dtw_after
+
     logg.info(
         f"时间一致性: 相似度={metrics['sequence_similarity_score']:.3f}, "
-        f"增益={metrics.get('similarity_gain', 0):.3f}"
+        f"增益={metrics.get('similarity_gain', 0):.3f}, "
+        f"DTW缩减={metrics.get('dtw_distance_reduction', 0):.3f}"
     )
     return metrics
+
+
+def _compute_pairwise_dtw_distances(
+    mean_series: dict, mod_names: list[str],
+) -> dict[str, float]:
+    """计算各模态对之间的 DTW 距离（使用均值序列的简化 DTW）。"""
+    distances: dict[str, float] = {}
+    for i in range(len(mod_names)):
+        for j in range(i + 1, len(mod_names)):
+            mod_a, mod_b = mod_names[i], mod_names[j]
+            seq_a = mean_series[mod_a]["mean"]
+            seq_b = mean_series[mod_b]["mean"]
+            pair_key = f"{mod_a}_{mod_b}"
+            try:
+                # 尝试使用 tslearn DTW；不可用则用简化的 scipy DTW
+                try:
+                    from tslearn.metrics import dtw as ts_dtw
+                    dist = float(ts_dtw(seq_a.reshape(-1, 1), seq_b.reshape(-1, 1)))
+                except ImportError:
+                    dist = _simple_dtw(seq_a, seq_b)
+                distances[pair_key] = dist
+            except Exception:
+                distances[pair_key] = float("nan")
+    return distances
+
+
+def _simple_dtw(seq_a: np.ndarray, seq_b: np.ndarray) -> float:
+    """简化 DTW 距离计算（scipy 纯 Python 实现）。"""
+    from scipy.spatial.distance import cdist
+    n, m = len(seq_a), len(seq_b)
+    cost = cdist(seq_a.reshape(-1, 1), seq_b.reshape(-1, 1), metric="euclidean")
+    D = np.full((n + 1, m + 1), np.inf)
+    D[0, 0] = 0
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            D[i, j] = cost[i - 1, j - 1] + min(D[i - 1, j], D[i, j - 1], D[i - 1, j - 1])
+    return float(D[n, m])

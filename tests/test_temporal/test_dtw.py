@@ -33,7 +33,15 @@ def test_dtw_no_time_key(mock_mdata):
     assert result is mock_mdata
 
 
-def test_dtw_different_backends(mock_mdata):
-    """测试不同后端（不做实际调用，只验证构造）"""
-    aligner = DTWAligner(backend="dtaidistance")
-    assert aligner.backend == "dtaidistance"
+def test_dtw_weights(mock_mdata):
+    """测试加权 DTW 构造"""
+    weights = np.ones(100) * 0.5
+    aligner = DTWAligner(weights=weights)
+    assert aligner.weights is not None
+    assert len(aligner.weights) == 100
+
+
+def test_dtw_metric_param(mock_mdata):
+    """测试 metric 参数保留"""
+    aligner = DTWAligner(metric="euclidean")
+    assert aligner.metric == "euclidean"
